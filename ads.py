@@ -1,5 +1,13 @@
 import numpy as np # type: ignore
 import pandas as pd # type: ignore
+import matplotlib.pyplot as plt
+from pandas.api.types import is_numeric_dtype
+
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler,OneHotEncoder
+from sklearn.impute import SimpleImputer
 
 CSV_PATH = "ads_data/globalAdsPerformance.csv"
 
@@ -7,7 +15,7 @@ SEED = 119
 
 
 TARGET_COLUMN = "revenue"
-POSSIBLE_EXCLUDES = ["pid",TARGET_COLUMN,"platform","industry","country","date"]
+POSSIBLE_EXCLUDES = [TARGET_COLUMN,"platform","industry","country","date"]
 
 def split_indices(n:int, seed:int, train_frac:float = 0.70, val_frac: float = 0.15):
     rng = np.random.default_rng(SEED)
@@ -23,76 +31,97 @@ def split_indices(n:int, seed:int, train_frac:float = 0.70, val_frac: float = 0.
 
     return train_idx,val_idx,test_idx
 
+def add_bias(x):
+    new_column = np.ones((x.shape[0],1))
+    xb = np.hstack((new_column,x))
+    assert xb.shape == (x.shape[0],x.shape[1] + 1)
+    return xb
+    
+def mse_loss(xb,y,w):
+    y_hat = xb @ w
+    loss = np.mean((y_hat - y)**2)
+    return loss
+
+def mse_grad(xb,y,w):
+    error = (xb @ w ) - y
+    weights = xb.T
+    grad = ( (2/len(y)) * (weights @ error))
+    return grad
+
 def main():
 
     df = pd.read_csv(CSV_PATH)
+    print(df.head())
 
-    train_idx,val_idx,test_idx = split_indices(len(df),SEED)
+    #split the data -> find the numerical and categorial columns --> impute/create pipeline to scale data
+    #--> fit data using the training data --> convert to np arrays 
+    y = df[TARGET_COLUMN].to_numpy(dtype=np.float64)
+    x_df = df.drop(columns=POSSIBLE_EXCLUDES)
+    test_size = 0.15
+    val_size = 0.15 
 
-    train_df = df.iloc[train_idx].copy()
-    val_df = df.iloc[val_idx].copy()
-    test_df = df.iloc[test_idx].copy()
+    x_trainval,x_test,y_trainval,y_test = train_test_split(x_df,y,test_size=test_size,random_state=SEED)
 
-    # get the column we want to predict
+    val_fraction = val_size/(1.0 - test_size)
 
-    y_train = train_df[TARGET_COLUMN].to_numpy(dtype=float)
-    y_val = val_df[TARGET_COLUMN].to_numpy(dtype= float)
-    y_test = test_df[TARGET_COLUMN].to_numpy(dtype = float)
+    x_train,x_val,y_train,y_val = train_test_split(x_trainval,y_trainval,test_size=val_fraction,random_state=SEED)
 
-    x_train = train_df.drop(columns = [c for c in POSSIBLE_EXCLUDES if c in train_df.columns])
-    x_val = train_df.drop(columns = [c for c in POSSIBLE_EXCLUDES if c in val_df])
-    x_test = train_df.drop(columns= [c for c in POSSIBLE_EXCLUDES if c in test_df])
+    print(f"length of train: \n {x_train.shape} \n length of val: \n {x_val.shape} \n length of test: \n {x_test.shape}")
+    numeric_col = [c for c in x_df.columns if is_numeric_dtype(x_df[c])]
+    cat_col = [c for c in x_df.columns if c not in numeric_col]
 
-    numeric_col = [c for c in x_train.columns if pd.api.types.is_numeric_dtype(x_train[c]) ]
-    cat_col = [c for c in x_train.columns if c not in numeric_col]
+    num_pipe = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scalar",StandardScaler())
+    ])
+    cat_pipe = Pipeline(steps=[
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("onehot",OneHotEncoder(handle_unknown="ignore"))
+    ])
+    pre = ColumnTransformer(
+        transformers=[
+            ("num",num_pipe,numeric_col),
+            ("cat",cat_pipe,cat_col)
+        ],
+        remainder="drop"
+    )
+    x_train_p = pre.fit_transform(x_train)
+    x_val_p = pre.transform(x_val)
+    x_test_p = pre.transform(x_test)
 
-    x_train_num = x_train[numeric_col]
-    x_val_num = x_val[numeric_col]
-    x_test_num = x_test[numeric_col]
+    x_train_p = np.asarray(x_train_p, dtype=np.float64)
+    x_val_p = np.asarray(x_val_p,dtype=np.float64)
+    x_test_p = np.asarray(x_test_p,dtype=np.float64)
 
-    x_train_cat = x_train[cat_col]
-    x_val_cat = x_train[cat_col]
-    x_test_cat = x_train[cat_col]
+    xb_tr = add_bias(x_train_p)
+    xb_val = add_bias(x_val_p)
+    xb_test = add_bias(x_test_p)
+    w = np.zeros(xb_tr.shape[1],dtype=np.float64)
 
-    x_train_median = x_train_num.median()
+    training_losses = []
+    val_losses = []
+    epochs = 100
+    lr = .1
+    
+    for epoch in range(epochs):
+        grad = mse_grad(xb_tr,y_train,w)
+        w = w - lr * grad
+        training_losses.append(mse_loss(xb_tr,y_train,w))
+        val_losses.append(mse_loss(xb_val,y_val,w))
 
-    x_train_mode = x_train_cat.mode()
+        if (epoch+1) % 100 == 0:
+            print(epoch)
+            print("making Plot:")
+            plt.figure()
+            plt.plot(training_losses, label="train")
+            plt.plot(val_losses, label="val")
+            plt.xlabel("epoch")
+            plt.ylabel("MSE")
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig("loss_curve.png", dpi=200)
+            plt.close()
+            print(epoch+1,training_losses[-1],val_losses[-1])    
+    
 
-    print(x_train_num.isna().any())
-
-    x_train_num_imputed = x_train_num.fillna(x_train_median)
-    x_val_num_imputed = x_val_num.fillna(x_train_median)
-    x_test_num_imputed = x_test_num.fillna(x_train_median)
-
-
-    # for index,value in x_train_num_nas.items():
-    #     if value:
-    #         x_train_num_imputed = x_train_num.fillna(x_train_median)
-
-    x_train_cat_imputed = x_train_cat.fillna(x_train_mode.iloc[0])
-    x_val_cat_imputed = x_val_cat.fillna(x_train_mode.iloc[0])
-    x_test_cat_imputed = x_val.fillna(x_train_mode.iloc[0])
-
-    x_train_mean = x_train_num_imputed.mean()
-    x_train_std = x_train_num_imputed.std()
-
-    scaled_x_train = ((x_train_num_imputed-x_train_mean)/x_train_std)
-    scaled_x_val = ((x_val_num_imputed-x_train_mean)/x_train_std)
-    scaled_x_test = ((x_train_num_imputed-x_train_mean)/x_train_std)
-
-    x_train_ho = pd.get_dummies(x_train_cat_imputed)
-    x_train_ho_columns = x_train_ho.columns
-    x_val_ho = pd.get_dummies(x_val_cat_imputed).reindex(columns= x_train_ho_columns,fill_value=0)
-    x_test_ho = pd.get_dummies(x_test_cat_imputed).reindex(columns= x_train_ho_columns,fill_value=0)
-
-    x_train_np = np.concatenate((scaled_x_train,x_train_ho),axis=1)
-    x_val_np = np.concatenate((scaled_x_val,x_val_ho), axis=1)
-    x_test_np = np.concatenate((scaled_x_test,x_test_ho), axis =1)
-            
-            
-    print("Train/Val/Test sizes:", len(train_df), len(val_df), len(test_df))
-    print("Numeric cols:", numeric_col)
-    print("Categorical cols:", cat_col)
-
-    print(x_train_np.shape,y_train.shape)
 main()  
