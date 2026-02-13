@@ -48,6 +48,30 @@ def mse_grad(xb,y,w):
     grad = ( (2/len(y)) * (weights @ error))
     return grad
 
+
+def mse_loss_graph(train_loss,val_loss):
+    plt.figure()
+    plt.plot(train_loss, label="train")
+    plt.plot(val_loss, label="val")
+    plt.xlabel("Epoch")
+    plt.ylabel("MSE")
+    plt.title("Loss Curve – Revenue Prediction")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("loss_curve_rev.png", dpi = 200)
+    plt.close()
+
+
+def regression_plot(y,y_hat,tvt):
+    plt.figure()
+    plt.scatter(y_hat,y,alpha=0.3)
+    plt.ylabel("Actual Revanue")
+    plt.xlabel("predicted Revanue")
+    plt.title("actual vs predicted y")
+    plt.tight_layout
+    plt.savefig(f"pred_vs_actual_{tvt}")
+    plt.close()
+
 def main():
 
     df = pd.read_csv(CSV_PATH)
@@ -101,7 +125,7 @@ def main():
     training_losses = []
     val_losses = []
     epochs = 100
-    lr = .1
+    lr = 0.25
     
     for epoch in range(epochs):
         grad = mse_grad(xb_tr,y_train,w)
@@ -110,18 +134,17 @@ def main():
         val_losses.append(mse_loss(xb_val,y_val,w))
 
         if (epoch+1) % 100 == 0:
-            print(epoch)
-            print("making Plot:")
-            plt.figure()
-            plt.plot(training_losses, label="train")
-            plt.plot(val_losses, label="val")
-            plt.xlabel("epoch")
-            plt.ylabel("MSE")
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig("loss_curve.png", dpi=200)
-            plt.close()
             print(epoch+1,training_losses[-1],val_losses[-1])    
-    
+
+    y_hat_train = xb_tr @ w
+    y_hat_val = xb_val @ w
+    y_hat_test = xb_val @ w
+
+    print(df["revenue"].describe())
+    # mse_loss_graph(training_losses,val_losses)
+    # regression_plot(y_train,y_hat_train,"train")
+    # regression_plot(y_val,y_hat_val,"validate")
+    # regression_plot(y_test,y_hat_test,"test")
+
 
 main()  
